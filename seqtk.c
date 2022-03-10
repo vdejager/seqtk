@@ -42,6 +42,8 @@ typedef struct {
 	int n, m;
 	uint64_t *a;
 	int8_t *rev;
+	// VdJ added name
+	char *name;
 } reglist_t;
 
 #include "khash.h"
@@ -62,6 +64,9 @@ reghash_t *stk_reg_read_alt(const char *fn)
 	if (fp == 0) return 0;
 	ks = ks_init(fp);
 	while (ks_getuntil(ks, KS_SEP_LINE, &str, &dret) >= 0) {
+		//VdJ add *n to accomodate name column
+		char *name = '';
+		
 		int i, c, st = -1, en = -1, rev = 0;
 		char *p, *q;
 		reglist_t *r;
@@ -76,6 +81,9 @@ reghash_t *stk_reg_read_alt(const char *fn)
 				} else if (i == 2) {
 					if (isdigit(*q)) en = strtol(q, &q, 10);
 					if (q != p) en = -1;
+				} else if (i == 4) {
+					// VdJ add name column
+					if (isalpha(*q)) name = q;
 				} else if (i == 5) {
 					if (*q == '+') rev = 1;
 					else if (*q == '-') rev = -1;
@@ -102,6 +110,7 @@ reghash_t *stk_reg_read_alt(const char *fn)
 		}
 		r->a[r->n] = (uint64_t)st<<32 | en;
 		r->rev[r->n++] = rev;
+		r->name[r->n++] = name;
 	}
 	ks_destroy(ks);
 	gzclose(fp);
@@ -646,15 +655,18 @@ int stk_subseq(int argc, char *argv[])
 	khash_t(reg) *h = kh_init(reg);
 	gzFile fp;
 	kseq_t *seq;
-	int l, i, j, c, is_tab = 0, line = 0, do_strand = 0;
+	int l, i, j, c, is_tab = 0, line = 0, do_strand = 0, do_name=0;
 	char *seq_buf = 0;
 	uint32_t seq_max = 0;
 	khint_t k;
-	while ((c = getopt(argc, argv, "tl:s")) >= 0) {
+	while ((c = getopt(argc, argv, "tnl:s")) >= 0) {
 		switch (c) {
+		case 'n': do_name = 1; break;
 		case 't': is_tab = 1; break;
 		case 's': do_strand = 1; break;
 		case 'l': line = atoi(optarg); break;
+		// VdJ added to accept the -n option in order to add the name from the bed file.
+		// This needs to use the alternative stk_reg_read_alt function
 		}
 	}
 	if (optind + 2 > argc) {
@@ -662,11 +674,12 @@ int stk_subseq(int argc, char *argv[])
 		fprintf(stderr, "Options:\n");
 		fprintf(stderr, "  -t       TAB delimited output\n");
 		fprintf(stderr, "  -s       strand aware\n");
+		fprintf(stderr, "  -n       add name from bed file to sequence header\n");
 		fprintf(stderr, "  -l INT   sequence line length [%d]\n", line);
 		fprintf(stderr, "Note: Use 'samtools faidx' if only a few regions are intended.\n");
 		return 1;
 	}
-	if (do_strand) h = stk_reg_read_alt(argv[optind+1]);
+	if (do_strand || do_name) h = stk_reg_read_alt(argv[optind+1]);
 	else h = stk_reg_read(argv[optind+1]);
 	if (h == 0) {
 		fprintf(stderr, "[E::%s] failed to read the list of regions in file '%s'\n", __func__, argv[optind+1]);
@@ -686,18 +699,28 @@ int stk_subseq(int argc, char *argv[])
 		p = &kh_val(h, k);
 		for (i = 0; i < p->n; ++i) {
 			int beg = p->a[i]>>32, end = p->a[i];
+			
 			if (beg >= seq->seq.l) {
 				fprintf(stderr, "[subseq] %s: %d >= %ld\n", seq->name.s, beg, seq->seq.l);
 				continue;
 			}
 			if (end > seq->seq.l) end = seq->seq.l;
 			if (is_tab == 0) {
-				printf("%c%s", seq->qual.l == seq->seq.l? '@' : '>', seq->name.s);
+				// VdJ printf("%d ", name);
+				// VdJ printf("%c%s", seq->qual.l == seq->seq.l? '@' : '>', seqname);
+				// VdJ printf("%c%s", seq->qual.l == seq->seq.l? '@' : '>', seq->name.s);
+				printf("%d%c%s", do_name,seq->qual.l == seq->seq.l? '@' : '>', seq->name.s);
+				
 				if (beg > 0 || (int)p->a[i] != INT_MAX) {
 					if (end == INT_MAX) {
 						if (beg) printf(":%d", beg+1);
 					} else printf(":%d-%d", beg+1, end);
 				}
+				// VdJ add name tag
+				if(do_name){
+					printf(":%s:", p->name);
+				}
+				
 				if (seq->comment.l) printf(" %s", seq->comment.s);
 			} else printf("%s\t%d\t", seq->name.s, beg + 1);
 			if (end > seq->seq.l) end = seq->seq.l;
