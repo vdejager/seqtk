@@ -59,16 +59,16 @@ reghash_t *stk_reg_read_alt(const char *fn)
 	kstream_t *ks;
 	int dret;
 	kstring_t str = {0,0,0};
-
+	
 	fp = strcmp(fn, "-")? gzopen(fn, "r") : gzdopen(fileno(stdin), "r");
 	if (fp == 0) return 0;
 	ks = ks_init(fp);
 	while (ks_getuntil(ks, KS_SEP_LINE, &str, &dret) >= 0) {
 		//VdJ add *n to accomodate name column
-		char *name = '';
+		
 		
 		int i, c, st = -1, en = -1, rev = 0;
-		char *p, *q;
+		char *p, *q, *name;
 		reglist_t *r;
 		khint_t k;
 		for (i = 0, p = q = str.s;; ++p) {
@@ -81,9 +81,14 @@ reghash_t *stk_reg_read_alt(const char *fn)
 				} else if (i == 2) {
 					if (isdigit(*q)) en = strtol(q, &q, 10);
 					if (q != p) en = -1;
-				} else if (i == 4) {
+				} else if (i == 3) {
 					// VdJ add name column
-					if (isalpha(*q)) name = q;
+					// save position
+					name = q;
+				} else if (i==4) {
+					// finalize substring
+					name = strndup(name,q-name);
+
 				} else if (i == 5) {
 					if (*q == '+') rev = 1;
 					else if (*q == '-') rev = -1;
@@ -110,7 +115,7 @@ reghash_t *stk_reg_read_alt(const char *fn)
 		}
 		r->a[r->n] = (uint64_t)st<<32 | en;
 		r->rev[r->n++] = rev;
-		r->name[r->n++] = name;
+		r->name = name;
 	}
 	ks_destroy(ks);
 	gzclose(fp);
@@ -706,21 +711,21 @@ int stk_subseq(int argc, char *argv[])
 			}
 			if (end > seq->seq.l) end = seq->seq.l;
 			if (is_tab == 0) {
-				// VdJ printf("%d ", name);
-				// VdJ printf("%c%s", seq->qual.l == seq->seq.l? '@' : '>', seqname);
-				// VdJ printf("%c%s", seq->qual.l == seq->seq.l? '@' : '>', seq->name.s);
-				printf("%d%c%s", do_name,seq->qual.l == seq->seq.l? '@' : '>', seq->name.s);
+				// VdJ add name tag similar to bedtools getfasta -name option
+				if(do_name){
+					printf("%s::", p->name);
+				}
+				printf("%c%s", seq->qual.l == seq->seq.l? '@' : '>', seq->name.s);
 				
 				if (beg > 0 || (int)p->a[i] != INT_MAX) {
 					if (end == INT_MAX) {
 						if (beg) printf(":%d", beg+1);
 					} else printf(":%d-%d", beg+1, end);
 				}
-				// VdJ add name tag
+				// add strand info
 				if(do_name){
-					printf(":%s:", p->name);
+					printf("(%d) ", p->rev[i]);
 				}
-				
 				if (seq->comment.l) printf(" %s", seq->comment.s);
 			} else printf("%s\t%d\t", seq->name.s, beg + 1);
 			if (end > seq->seq.l) end = seq->seq.l;
