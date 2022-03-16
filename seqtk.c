@@ -42,8 +42,8 @@ typedef struct {
 	int n, m;
 	uint64_t *a;
 	int8_t *rev;
-	// VdJ added name
-	char *name;
+	//VdJ added name array
+	char *name[];
 } reglist_t;
 
 #include "khash.h"
@@ -64,9 +64,7 @@ reghash_t *stk_reg_read_alt(const char *fn)
 	if (fp == 0) return 0;
 	ks = ks_init(fp);
 	while (ks_getuntil(ks, KS_SEP_LINE, &str, &dret) >= 0) {
-		//VdJ add *n to accomodate name column
-		
-		
+		// VdJ add *name to accomodate name column
 		int i, c, st = -1, en = -1, rev = 0;
 		char *p, *q, *name;
 		reglist_t *r;
@@ -82,11 +80,10 @@ reghash_t *stk_reg_read_alt(const char *fn)
 					if (isdigit(*q)) en = strtol(q, &q, 10);
 					if (q != p) en = -1;
 				} else if (i == 3) {
-					// VdJ add name column
-					// save position
+					// VdJ add name column and save position
 					name = q;
 				} else if (i==4) {
-					// finalize substring
+					// VdJ finalize substring
 					name = strndup(name,q-name);
 
 				} else if (i == 5) {
@@ -112,10 +109,11 @@ reghash_t *stk_reg_read_alt(const char *fn)
 			r->m = r->m? r->m<<1 : 4;
 			r->a = (uint64_t*)realloc(r->a, r->m * 8);
 			r->rev = (int8_t*)realloc(r->rev, r->m);
-		}
+		}	
 		r->a[r->n] = (uint64_t)st<<32 | en;
 		r->rev[r->n++] = rev;
-		r->name = name;
+		// VdJ added name column
+		r->name[r->n] = name;
 	}
 	ks_destroy(ks);
 	gzclose(fp);
@@ -662,6 +660,7 @@ int stk_subseq(int argc, char *argv[])
 	kseq_t *seq;
 	int l, i, j, c, is_tab = 0, line = 0, do_strand = 0, do_name=0;
 	char *seq_buf = 0;
+	char *qual_buf = 0;
 	uint32_t seq_max = 0;
 	khint_t k;
 	while ((c = getopt(argc, argv, "tnl:s")) >= 0) {
@@ -679,11 +678,12 @@ int stk_subseq(int argc, char *argv[])
 		fprintf(stderr, "Options:\n");
 		fprintf(stderr, "  -t       TAB delimited output\n");
 		fprintf(stderr, "  -s       strand aware\n");
-		fprintf(stderr, "  -n       add name from bed file to sequence header\n");
+		fprintf(stderr, "  -n       add name and strand info from bed file to sequence header\n");
 		fprintf(stderr, "  -l INT   sequence line length [%d]\n", line);
 		fprintf(stderr, "Note: Use 'samtools faidx' if only a few regions are intended.\n");
 		return 1;
 	}
+
 	if (do_strand || do_name) h = stk_reg_read_alt(argv[optind+1]);
 	else h = stk_reg_read(argv[optind+1]);
 	if (h == 0) {
@@ -713,7 +713,7 @@ int stk_subseq(int argc, char *argv[])
 			if (is_tab == 0) {
 				// VdJ add name tag similar to bedtools getfasta -name option
 				if(do_name){
-					printf("%s::", p->name);
+					printf("%s::", p->name[i]);
 				}
 				printf("%c%s", seq->qual.l == seq->seq.l? '@' : '>', seq->name.s);
 				
@@ -722,26 +722,50 @@ int stk_subseq(int argc, char *argv[])
 						if (beg) printf(":%d", beg+1);
 					} else printf(":%d-%d", beg+1, end);
 				}
-				// add strand info
-				if(do_name){
+				// VdJ add strand info
+				if(do_name && do_strand){
 					printf("(%d) ", p->rev[i]);
 				}
 				if (seq->comment.l) printf(" %s", seq->comment.s);
 			} else printf("%s\t%d\t", seq->name.s, beg + 1);
 			if (end > seq->seq.l) end = seq->seq.l;
+
 			if (do_strand && p->rev) { // TODO: the strand mode only works with FASTA
 				if (end - beg >= seq_max) {
 					seq_max = end - beg;
 					kroundup32(seq_max);
 					seq_buf = (char*)realloc(seq_buf, seq_max);
+					// VdJ
+					qual_buf = (char*)realloc(qual_buf, seq_max);
 				}
-				if (p->rev[i] < 0)
-					for (j = end - 1; j >= beg; --j)
+				if (p->rev[i] < 0) {
+					for (j = end - 1; j >= beg; --j) {
 						seq_buf[end - 1 - j] = (uint8_t)seq->seq.s[j] >= 128? 'N' : comp_tab[(uint8_t)seq->seq.s[j]];
-				else memcpy(seq_buf, &seq->seq.s[beg], end - beg);
+						if (seq->qual.l) {
+							qual_buf[end - 1 - j] = (uint8_t)seq->qual.s[j];
+						}
+					}
+
+				} else {
+					memcpy(seq_buf, &seq->seq.s[beg], end - beg);
+					if (seq->qual.l){
+						memcpy(qual_buf, &seq->qual.s[beg], end - beg);
+					}
+				}
+				
 				putchar('\n');
 				fwrite(seq_buf, 1, end - beg, stdout);
 				putchar('\n');
+				if (seq->qual.l != seq->seq.l || is_tab) continue;
+				
+				// VdJ
+				if (seq->qual.l) {
+					putchar('+');
+					putchar('\n');
+					fwrite(qual_buf, 1, end - beg, stdout);
+					putchar('\n');
+					}
+
 			} else {
 				for (j = 0; j < end - beg; ++j) {
 					if (is_tab == 0 && (j == 0 || (line > 0 && j % line == 0))) putchar('\n');
