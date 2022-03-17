@@ -38,9 +38,15 @@ Seqtk Examples
 
         seqtk subseq in.fq name.lst > out.fq
 
-* Extract sequences in regions contained in file `reg.bed`:
+* Extract sequences in regions contained in file `reg.bed`, support for both FASTA/Q:
 
         seqtk subseq in.fa reg.bed > out.fa
+        seqtk subseq in.fq reg.bed > out.fq
+
+* Extract sequences in regions contained in file `reg.bed` while including the 'name' column from a bed file and/or respect the strand, support for both FASTA/Q:
+
+        seqtk subseq -n in.fa reg.bed > out.fa
+        seqtk subseq -n -s in.fq reg.bed > out.fq
 
 * Mask regions in `reg.bed` to lowercases:
 
